@@ -165,6 +165,11 @@ type Config struct {
 	GossipNodes         int
 	GossipToTheDeadTime time.Duration
 
+
+	// two key config of user gossip
+	GossipIntervalForUser time.Duration
+	GossipNodesForUser    int
+
 	// GossipVerifyIncoming controls whether to enforce encryption for incoming
 	// gossip. It is used for upshifting from unencrypted to encrypted gossip on
 	// a running cluster.
@@ -325,6 +330,9 @@ func DefaultLANConfig() *Config {
 		GossipVerifyIncoming: true,
 		GossipVerifyOutgoing: true,
 
+		GossipNodesForUser:    3,
+		GossipIntervalForUser: 150 * time.Millisecond,
+
 		EnableCompression: true, // Enable compression by default
 
 		SecretKey: nil,
@@ -353,6 +361,8 @@ func DefaultWANConfig() *Config {
 	conf.GossipNodes = 4 // Gossip less frequently, but to an additional node
 	conf.GossipInterval = 500 * time.Millisecond
 	conf.GossipToTheDeadTime = 60 * time.Second
+	conf.GossipIntervalForUser = 450 * time.Millisecond
+	conf.GossipNodesForUser = 4
 	return conf
 }
 
@@ -387,6 +397,7 @@ func DefaultLocalConfig() *Config {
 	conf.ProbeTimeout = 200 * time.Millisecond
 	conf.ProbeInterval = time.Second
 	conf.GossipInterval = 100 * time.Millisecond
+	conf.GossipIntervalForUser = 90 * time.Millisecond
 	conf.GossipToTheDeadTime = 15 * time.Second
 	return conf
 }

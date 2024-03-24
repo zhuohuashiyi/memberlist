@@ -152,6 +152,13 @@ func (m *Memberlist) schedule() {
 		m.tickers = append(m.tickers, t)
 	}
 
+	// Create a user gossip ticker if needed
+	if m.config.GossipIntervalForUser > 0 && m.config.GossipNodesForUser > 0 {
+		t := time.NewTicker(m.config.GossipIntervalForUser)
+		go m.triggerFunc(m.config.GossipIntervalForUser, t.C, stopCh, m.userGossip)
+		m.tickers = append(m.tickers, t)
+	}
+
 	// If we made any tickers, then record the stopTick channel for
 	// later.
 	if len(m.tickers) > 0 {
@@ -621,7 +628,64 @@ func (m *Memberlist) gossip() {
 
 	for _, node := range kNodes {
 		// Get any pending broadcasts
-		msgs := m.getBroadcasts(compoundOverhead, bytesAvail)
+		msgs := m.getBroadcasts(compoundOverhead, bytesAvail, 1)
+		if len(msgs) == 0 {
+			return
+		}
+
+		addr := node.Address()
+		if len(msgs) == 1 {
+			// Send single message as is
+			if err := m.rawSendMsgPacket(node.FullAddress(), &node, msgs[0]); err != nil {
+				m.logger.Printf("[ERR] memberlist: Failed to send gossip to %s: %s", addr, err)
+			}
+		} else {
+			// Otherwise create and send one or more compound messages
+			compounds := makeCompoundMessages(msgs)
+			for _, compound := range compounds {
+				if err := m.rawSendMsgPacket(node.FullAddress(), &node, compound.Bytes()); err != nil {
+					m.logger.Printf("[ERR] memberlist: Failed to send gossip to %s: %s", addr, err)
+				}
+			}
+		}
+	}
+}
+
+
+// userGossip is invoked every GossipIntervalForUser period to broadcast user's gossip
+// messages to a few random nodes.
+func (m *Memberlist) userGossip() {
+	defer metrics.MeasureSinceWithLabels([]string{"memberlist", "gossip"}, time.Now(), m.metricLabels)
+
+	// Get some random live, suspect, or recently dead nodes
+	m.nodeLock.RLock()
+	kNodes := kRandomNodes(m.config.GossipNodes, m.nodes, func(n *nodeState) bool {
+		if n.Name == m.config.Name {
+			return true
+		}
+
+		switch n.State {
+		case StateAlive, StateSuspect:
+			return false
+
+		case StateDead:
+			return time.Since(n.StateChange) > m.config.GossipToTheDeadTime
+
+		default:
+			return true
+		}
+	})
+	m.nodeLock.RUnlock()
+
+	// Compute the bytes available
+	bytesAvail := m.config.UDPBufferSize - compoundHeaderOverhead - labelOverhead(m.config.Label)
+	if m.config.EncryptionEnabled() {
+		bytesAvail -= encryptOverhead(m.encryptionVersion())
+	}
+
+	for _, node := range kNodes {
+		// Get any pending broadcasts
+		msgs := m.getBroadcasts(compoundOverhead, bytesAvail, 0)
 		if len(msgs) == 0 {
 			return
 		}
